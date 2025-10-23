@@ -120,4 +120,579 @@
     .modal { position: fixed; inset: 0; display: none; z-index: 9999; }
     .modal.show { display: block; }
     .modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); }
-    .modal-dialog { position: absolute; top: 50%; left: 50%; transfor
+    .modal-dialog { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(920px, 92vw); height: min(70vh, 85vh); background: var(--panel); border: 1px solid #22293a; border-radius: 18px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--outline); }
+    .modal-title { font-weight: 700; }
+    .modal-close { appearance: none; border: 0; background: transparent; color: var(--text); font-size: 22px; cursor: pointer; padding: 6px 10px; }
+    .modal-actions{display:flex;align-items:center;gap:6px}
+    .modal-body { flex: 1; background: #0b0e14; display: grid; place-items: center; }
+    .modal-body iframe, .modal-body video { width: 100%; height: 100%; border: 0; }
+
+    footer { padding: 28px 20px; color: #9aa3b2; border-top: 1px solid var(--outline); }
+    code { background: #0d1117; border: 1px solid #1f2633; padding: 2px 6px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Flux média (JSON → cartes)</h1>
+      <div class="sub">Cette page suppose que le fichier JSON est accessible à la <strong>même origine</strong>. Vous pouvez aussi passer un paramètre <code>?src=URL</code> pour charger un autre JSON.</div>
+      <div class="toolbar">
+        <input id="q" type="search" placeholder="Filtrer par titre ou description…" autocomplete="off" />
+        <select id="sort">
+          <option value="relevance">Trier : pertinence</option>
+          <option value="title_asc">Titre A→Z</option>
+          <option value="title_desc">Titre Z→A</option>
+          <option value="date_desc">Date · récent → ancien</option>
+          <option value="date_asc">Date · ancien → récent</option>
+        </select>
+        <div class="seg" role="group" aria-label="Affichage">
+          <button id="viewGrid" aria-pressed="true" title="Grille">Grille</button>
+          <button id="viewList" aria-pressed="false" title="Liste">Liste</button>
+        </div>
+        <button class="btn" id="reload" type="button">Recharger</button>
+        <button class="btn" id="theme" type="button" title="Basculer thème">Thème</button>
+      </div>
+      <div class="filters" id="filters"></div>
+      <div class="status" id="status" aria-live="polite"></div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="grid" id="grid" role="list"></div>
+    <div class="pager" id="pager"></div>
+  </main>
+
+  <!-- Modal lecteur -->
+  <div id="modal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-label="Lecteur">
+      <div class="modal-header">
+        <div class="modal-title">Lecteur</div>
+        <div class="modal-actions">
+          <button id="modalFs" class="modal-close" type="button" aria-label="Plein écran">⛶</button>
+          <button id="modalClose" class="modal-close" type="button" aria-label="Fermer">×</button>
+        </div>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <footer class="wrap">
+    <div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+        <input id="file" type="file" accept="application/json" />
+        <button class="btn" id="exportJson" type="button">Exporter (JSON) — éléments visibles</button>
+        <button class="btn" id="exportCsv" type="button">Exporter (CSV) — éléments visibles</button>
+        <a id="openSrc" class="btn" href="#" target="_blank" rel="noopener">Ouvrir la source</a>
+      </div>
+      <div>Astuce : si vous ouvrez ce fichier directement en <code>file://</code>, certains navigateurs bloquent <code>fetch()</code>. Servez ces fichiers via un petit serveur HTTP local (ex. <code>python -m http.server</code>) ou placez-les sur votre hébergement.</div>
+    </div>
+  </footer>
+
+  <script>
+    // ====== Config / URL params ======
+    const DEFAULT_JSON_URL = './getFeed.php.json';
+    const usp = new URLSearchParams(location.search);
+    const JSON_URL = usp.get('src') || DEFAULT_JSON_URL;
+
+    // >>> Ajout : source courante + presets (URLs fictives à remplacer)
+    let currentSrc = JSON_URL;
+    const PRESETS = [
+      { label: 'Flux 1', url: '/data/flux1.json' },
+      { label: 'Flux 2', url: '/data/flux2.json' },
+      { label: 'Flux 3', url: '/data/flux3.json' }
+    ];
+
+    // ====== Elements ======
+    const $grid = document.getElementById('grid');
+    const $q = document.getElementById('q');
+    const $sort = document.getElementById('sort');
+    const $status = document.getElementById('status');
+    const $reload = document.getElementById('reload');
+    const $filters = document.getElementById('filters');
+    const $pager = document.getElementById('pager');
+    const $themeBtn = document.getElementById('theme');
+    const $file = document.getElementById('file');
+    const $openSrc = document.getElementById('openSrc');
+
+    const $viewGrid = document.getElementById('viewGrid');
+    const $viewList = document.getElementById('viewList');
+
+    const $modal = document.getElementById('modal');
+    const $modalBody = document.getElementById('modalBody');
+    const $modalClose = document.getElementById('modalClose');
+    const $modalFs = document.getElementById('modalFs');
+
+    // ====== State ======
+    let rawItems = [];
+    let filtered = [];
+    let selectedCats = new Set();
+    let currentSort = usp.get('sort') || 'relevance';
+    let currentPage = parseInt(usp.get('page') || '1', 10);
+    let viewMode = usp.get('view') || 'grid';
+    const PAGE_SIZE = 24;
+    const locale = navigator.language || 'fr-FR';
+
+    // ====== Utils ======
+    function setBodyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+    }
+    function getCurrentTheme() {
+      return document.documentElement.getAttribute('data-theme') || 'dark';
+    }
+
+    function text(t) { return document.createTextNode(t ?? ''); }
+
+    function el(tag, opts = {}) {
+      const n = document.createElement(tag);
+      if (opts.class) n.className = opts.class;
+      if (opts.attrs) for (const [k,v] of Object.entries(opts.attrs)) {
+        if (v != null) n.setAttribute(k, v);
+      }
+      if (opts.text) n.appendChild(text(opts.text));
+      if (opts.html != null) n.innerHTML = opts.html;
+      return n;
+    }
+
+    function byPath(obj, path) {
+      return path.split('.').reduce((acc, key) => (acc && acc[key] !== undefined) ? acc[key] : undefined, obj);
+    }
+    function getArray(x) { return Array.isArray(x) ? x : (x ? [x] : []); }
+    function uniq(arr) { return [...new Set(arr)]; }
+
+    function parseDate(str) { if (!str) return null; const d = new Date(str); return isNaN(+d) ? null : d; }
+    function tryFirstDate(it) {
+      return (
+        parseDate(it?.pubDate) ||
+        parseDate(it?.date) ||
+        parseDate(it?.updated) ||
+        parseDate(it?.published) ||
+        parseDate(it?.['dc:date']) ||
+        parseDate(it?.isoDate) ||
+        null
+      );
+    }
+
+    function pickDesc(it, media) {
+      return (
+        media?.['media:description'] ||
+        it?.description ||
+        it?.['content:encoded'] ||
+        ''
+      );
+    }
+
+    function parseItems(data) {
+      const rss = getArray(data?.rss);
+      const channel = getArray(rss?.[0]?.channel);
+      const items = getArray(channel?.[0]?.item);
+      const mapped = items.map((it) => {
+        const title = it?.title ?? '';
+        const link = it?.link ?? '';
+        const media = getArray(it['media:content'])?.[0] ?? {};
+        const thumb = media?.['media:thumbnail']?._url || media?.thumbnail || '';
+        const desc = pickDesc(it, media);
+        const player = media?.['media:player']?._url ?? '';
+        const mediaUrl = media?._url || it?.enclosure?._url || '';
+        const cats = getArray(media?.['media:category']).map(c => c?.['media:category']).filter(Boolean);
+        const dateObj = tryFirstDate(it);
+        const dateMs = dateObj ? dateObj.getTime() : null;
+        return { title, link, thumb, desc, player, mediaUrl, cats, dateMs };
+      });
+      const seen = new Set();
+      const out = [];
+      for (const m of mapped) {
+        const key = (m.link || m.mediaUrl || m.title || '').trim();
+        if (!key || seen.has(key)) continue;
+        seen.add(key); out.push(m);
+      }
+      return out;
+    }
+
+    function isVideoUrl(url) {
+      if (!url) return false; const u = url.split('?')[0].toLowerCase();
+      return u.endsWith('.mp4') || u.endsWith('.webm') || u.endsWith('.ogg') || u.endsWith('.m3u8');
+    }
+    function formatDateMs(ms) {
+      if (!ms) return ''; try { return new Date(ms).toLocaleDateString(locale, { year: 'numeric', month: 'short', day: '2-digit' }); } catch { return ''; }
+    }
+
+    function openPlayer(item) {
+      $modalBody.innerHTML = '';
+      let node = null;
+      if (item.player) {
+        node = el('iframe', { attrs: { src: item.player, allow: 'autoplay; encrypted-media; picture-in-picture', allowfullscreen: 'true' } });
+      } else if (isVideoUrl(item.mediaUrl)) {
+        node = el('video', { attrs: { src: item.mediaUrl, controls: 'true', playsinline: 'true' } });
+      }
+      if (!node) {
+        window.open(item.link || item.mediaUrl || item.player, '_blank', 'noopener');
+        return;
+      }
+      $modalBody.appendChild(node);
+      openModal();
+    }
+
+    function openModal() { $modal.classList.add('show'); $modal.setAttribute('aria-hidden', 'false'); }
+    function closeModal() { $modal.classList.remove('show'); $modal.setAttribute('aria-hidden', 'true'); $modalBody.innerHTML = ''; }
+
+    function placeholderThumbSVG() {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450"><rect width="800" height="450" fill="#10131a"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#4c5670" font-family="sans-serif" font-size="28">Aperçu indisponible</text></svg>`;
+      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    }
+
+    function card(item) {
+      const c = el('article', { class: 'card', attrs: { role: 'listitem' } });
+      const imgSrc = item.thumb || placeholderThumbSVG();
+      const img = el('img', { class: 'thumb', attrs: { src: imgSrc, alt: '', loading: 'lazy' } });
+      c.appendChild(img);
+
+      const content = el('div', { class: 'content' });
+      const h3 = el('div', { class: 'title' }); h3.textContent = item.title || 'Sans titre';
+      const desc = el('p', { class: 'desc' }); desc.textContent = item.desc || '';
+      const meta = el('div', { class: 'meta' });
+      if (item.dateMs) meta.appendChild(el('span', { class: 'pill', text: formatDateMs(item.dateMs) }));
+      for (const cat of item.cats || []) meta.appendChild(el('span', { class: 'pill', text: cat }));
+
+      content.appendChild(h3);
+      if (item.desc) content.appendChild(desc);
+      if ((item.cats && item.cats.length) || item.dateMs) content.appendChild(meta);
+      c.appendChild(content);
+
+      const actions = el('div', { class: 'actions' });
+      if (item.player || isVideoUrl(item.mediaUrl)) {
+        const btnPlay = el('button', { class: 'btn btn-primary', text: 'Lire ici', attrs: { type: 'button' } });
+        btnPlay.addEventListener('click', () => openPlayer(item));
+        actions.appendChild(btnPlay);
+      }
+      if (item.player) actions.appendChild(el('a', { class: 'btn', attrs: { href: item.player, target: '_blank', rel: 'noopener' }, text: 'Ouvrir le lecteur' }));
+      if (item.link) actions.appendChild(el('a', { class: 'btn', attrs: { href: item.link, target: '_blank', rel: 'noopener' }, text: 'Lien' }));
+      if (item.mediaUrl) actions.appendChild(el('a', { class: 'btn', attrs: { href: item.mediaUrl, target: '_blank', rel: 'noopener' }, text: 'Média' }));
+      c.appendChild(actions);
+
+      return c;
+    }
+
+    function skeletonCard() {
+      const c = el('article', { class: 'card skel', attrs: { 'aria-hidden': 'true' } });
+      const t = el('div', { class: 'thumb' }); c.appendChild(t);
+      const content = el('div', { class: 'content' });
+      content.appendChild(el('div'));
+      content.appendChild(el('div'));
+      content.appendChild(el('div'));
+      c.appendChild(content); return c;
+    }
+
+    function render(list, page = 1) {
+      const total = list.length;
+      const start = (page - 1) * PAGE_SIZE;
+      const end = Math.min(start + PAGE_SIZE, total);
+      const slice = list.slice(start, end);
+
+      $grid.innerHTML = '';
+      const frag = document.createDocumentFragment();
+      for (const it of slice) frag.appendChild(card(it));
+      $grid.appendChild(frag);
+
+      $status.innerHTML = `${total} élément(s) · Page ${page}/${Math.max(1, Math.ceil(total / PAGE_SIZE))} · Source : <code>${currentSrc}</code>`;
+      buildPager(total, page);
+
+      const params = new URLSearchParams();
+      if (currentSrc && currentSrc !== DEFAULT_JSON_URL) params.set('src', currentSrc);
+      const qv = ($q.value || '').trim(); if (qv) params.set('q', qv);
+      if (currentSort !== 'relevance') params.set('sort', currentSort);
+      if (viewMode !== 'grid') params.set('view', viewMode);
+      if (selectedCats.size) params.set('cat', [...selectedCats].join(','));
+      if (page > 1) params.set('page', String(page));
+      history.replaceState({}, '', `${location.pathname}?${params.toString()}`);
+    }
+
+    function buildPager(total, page) {
+      $pager.innerHTML = '';
+      const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+      const prev = el('button', { text: '‹ Précédent' }); prev.disabled = page <= 1; prev.addEventListener('click', () => goPage(page - 1));
+      const next = el('button', { text: 'Suivant ›' }); next.disabled = page >= pages; next.addEventListener('click', () => goPage(page + 1));
+      $pager.appendChild(prev);
+      $pager.appendChild(el('span', { text: ` Page ${page}/${pages} ` }));
+      $pager.appendChild(next);
+    }
+
+    function sortItems(list, mode) {
+      const a = [...list];
+      switch (mode) {
+        case 'title_asc': a.sort((x, y) => (x.title || '').localeCompare(y.title || '', locale, { sensitivity: 'base' })); break;
+        case 'title_desc': a.sort((x, y) => (y.title || '').localeCompare(x.title || '', locale, { sensitivity: 'base' })); break;
+        case 'date_desc': a.sort((x, y) => (y.dateMs || 0) - (x.dateMs || 0)); break;
+        case 'date_asc': a.sort((x, y) => (x.dateMs || 0) - (y.dateMs || 0)); break;
+        default: break;
+      }
+      return a;
+    }
+
+    function applyFilter() {
+      const q = ($q.value || '').normalize('NFD').replace(/[\u0300-\u036F]/g, '').toLowerCase();
+      filtered = rawItems.filter(it => {
+        const hay = `${it.title} ${it.desc}`.normalize('NFD').replace(/[\u0300-\u036F]/g, '').toLowerCase();
+        const matchesText = hay.includes(q);
+        const matchesCats = selectedCats.size === 0 || it.cats?.some(c => selectedCats.has(c));
+        return matchesText && matchesCats;
+      });
+      filtered = sortItems(filtered, currentSort);
+      currentPage = 1;
+      render(filtered, currentPage);
+      renderCategoryChips();
+    }
+
+    function goPage(p) { currentPage = Math.max(1, p); render(filtered, currentPage); }
+
+    function buildSkeletons(n = 10) {
+      $grid.innerHTML = ''; const frag = document.createDocumentFragment();
+      for (let i = 0; i < n; i++) frag.appendChild(skeletonCard()); $grid.appendChild(frag);
+    }
+
+    // ====== Categories ======
+    function computeCategoryCounts(list) {
+      const m = new Map();
+      for (const it of list) {
+        for (const c of it.cats || []) m.set(c, (m.get(c) || 0) + 1);
+      }
+      return [...m.entries()].sort((a,b) => b[1] - a[1]);
+    }
+
+    // >>> Ajout : injection du sélecteur juste après la puce "Divertissement et télévision (…)"
+
+    function makeJsonSwitcherNode() {
+      const wrap = document.createElement('span');
+      wrap.className = 'chip chip-select';
+      const label = document.createElement('span');
+      label.textContent = 'Source :';
+      const sel = document.createElement('select');
+      sel.setAttribute('aria-label','Choisir la source JSON');
+
+      const def = document.createElement('option');
+      def.value = '';
+      def.textContent = '— choisir —';
+      sel.appendChild(def);
+
+      PRESETS.forEach(p => {
+        const o = document.createElement('option');
+        o.value = p.url; o.textContent = p.label;
+        sel.appendChild(o);
+      });
+
+      const found = PRESETS.find(p => p.url === currentSrc);
+      if (found) sel.value = found.url;
+
+      sel.addEventListener('change', async () => {
+        if (!sel.value) return;
+        currentSrc = sel.value;
+
+        const params = new URLSearchParams(location.search);
+        params.set('src', currentSrc);
+        history.replaceState({}, '', `${location.pathname}?${params.toString()}`);
+
+        await loadFromUrl(currentSrc);
+      });
+
+      wrap.appendChild(label);
+      wrap.appendChild(sel);
+      return wrap;
+    }
+
+    function injectJsonSwitcher() {
+      const $filters = document.getElementById('filters');
+      if (!$filters) return;
+
+      const old = $filters.querySelector('.chip-select');
+      if (old) old.remove();
+
+      const target = Array.from($filters.querySelectorAll('.chip'))
+        .find(chip => chip.textContent.trim().startsWith('Divertissement et télévision'));
+      const mountAfter = target || $filters.lastElementChild;
+
+      const node = makeJsonSwitcherNode();
+      if (mountAfter && mountAfter.nextSibling) {
+        mountAfter.parentNode.insertBefore(node, mountAfter.nextSibling);
+      } else {
+        $filters.appendChild(node);
+      }
+    }
+
+    function renderCategoryChips() {
+      const counts = computeCategoryCounts(rawItems);
+      $filters.innerHTML = '';
+      if (!counts.length) { injectJsonSwitcher(); return; }
+      const reset = el('span', { class: 'chip' }); reset.appendChild(text('Tout')); if (!selectedCats.size) reset.classList.add('active');
+      reset.addEventListener('click', () => { selectedCats.clear(); applyFilter(); });
+      $filters.appendChild(reset);
+      for (const [cat, n] of counts) {
+        const chip = el('span', { class: 'chip', text: `${cat} (${n})` });
+        if (selectedCats.has(cat)) chip.classList.add('active');
+        chip.addEventListener('click', () => {
+          if (selectedCats.has(cat)) selectedCats.delete(cat); else selectedCats.add(cat);
+          applyFilter();
+        });
+        $filters.appendChild(chip);
+      }
+      // >>> Ajout : insérer la dropdown juste après la puce visée
+      injectJsonSwitcher();
+    }
+
+    // ====== Export ======
+    function download(name, content, type = 'application/json') {
+      const blob = new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    function exportVisibleJSON() { download('items-visible.json', JSON.stringify(filtered, null, 2)); }
+    function exportVisibleCSV() {
+      const rows = [['title','date','link','player','mediaUrl','categories','desc']];
+      for (const it of filtered) {
+        const row = [it.title, formatDateMs(it.dateMs), it.link, it.player, it.mediaUrl, (it.cats||[]).join('|'), it.desc];
+        rows.push(row.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"'));
+      }
+      download('items-visible.csv', rows.map(r => r.join(',')).join('\n'), 'text/csv');
+    }
+
+    // ====== Loaders ======
+    async function loadFromUrl(url) {
+      $status.textContent = 'Chargement…'; buildSkeletons(8);
+      const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 20000);
+      try {
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: ctrl.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        rawItems = parseItems(data);
+        applyFilter();
+        $openSrc.href = url; $openSrc.textContent = 'Ouvrir la source';
+      } catch (err) {
+        console.error(err);
+        $status.innerHTML = `<span class="error">Échec du chargement : ${String(err.message || err)}</span>`;
+        $grid.innerHTML = '';
+      } finally { clearTimeout(t); }
+    }
+
+    async function loadFromFile(file) {
+      $status.textContent = `Lecture du fichier local : ${file.name}`;
+      const text = await file.text();
+      try {
+        const data = JSON.parse(text);
+        rawItems = parseItems(data);
+        applyFilter();
+        $openSrc.href = '#'; $openSrc.textContent = 'Source : fichier local';
+      } catch (e) {
+        $status.innerHTML = `<span class="error">Le fichier n'est pas un JSON valide.</span>`;
+      }
+    }
+
+    // ====== Event wiring ======
+    function syncViewButtons() {
+      $viewGrid.setAttribute('aria-pressed', String(viewMode === 'grid'));
+      $viewList.setAttribute('aria-pressed', String(viewMode === 'list'));
+      document.body.classList.toggle('list', viewMode === 'list');
+    }
+
+    $q.addEventListener('input', () => applyFilter());
+    $reload.addEventListener('click', () => loadFromUrl(currentSrc));
+    $sort.addEventListener('change', () => { currentSort = $sort.value; applyFilter(); });
+
+    $viewGrid.addEventListener('click', () => { viewMode = 'grid'; syncViewButtons(); render(filtered, currentPage); });
+    $viewList.addEventListener('click', () => { viewMode = 'list'; syncViewButtons(); render(filtered, currentPage); });
+
+    $themeBtn.addEventListener('click', () => { setBodyTheme(getCurrentTheme() === 'dark' ? 'light' : 'dark'); });
+
+    $modal.addEventListener('click', (e) => { if (e.target.hasAttribute('data-close')) closeModal(); });
+    $modalClose.addEventListener('click', closeModal);
+
+    function getMediaNode(){ return $modalBody.querySelector('video, iframe'); }
+    function toggleFullscreen(){
+      const el = getMediaNode() || $modal;
+      if (!document.fullscreenElement && el && el.requestFullscreen) {
+        el.requestFullscreen();
+      } else if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+    if ($modalFs) $modalFs.addEventListener('click', (e)=>{ e.preventDefault(); toggleFullscreen(); });
+    $modalBody.addEventListener('dblclick', () => toggleFullscreen());
+    document.addEventListener('keydown', (e) => {
+      if (!$modal.classList.contains('show')) return;
+      if (e.key === 'Escape') { closeModal(); }
+      else if (e.key && e.key.toLowerCase() === 'f') { toggleFullscreen(); }
+    });
+
+    document.getElementById('exportJson').addEventListener('click', exportVisibleJSON);
+    document.getElementById('exportCsv').addEventListener('click', exportVisibleCSV);
+
+    $file.addEventListener('change', (e) => { const f = e.target.files?.[0]; if (f) loadFromFile(f); });
+
+    // ====== Init from URL state ======
+    (function initStateFromUrl(){
+      const qv = usp.get('q') || ''; $q.value = qv; if (usp.get('sort')) $sort.value = usp.get('sort');
+      viewMode = (usp.get('view') === 'list') ? 'list' : 'grid'; syncViewButtons();
+      const cats = (usp.get('cat') || '').split(',').map(s => s.trim()).filter(Boolean); selectedCats = new Set(cats);
+      currentPage = Math.max(1, parseInt(usp.get('page') || '1', 10));
+      setBodyTheme('dark');
+    })();
+
+    // ====== Start ======
+    renderCategoryChips();
+    loadFromUrl(currentSrc);
+  </script>
+
+  <!-- Interception désactivée par défaut (on ne cible que les liens marqués data-modal="player") -->
+  <script>
+    (function(){
+      function stripFirstSlash(s){ return (s && s.charAt(0)==='/' ) ? s.slice(1) : (s||''); }
+      function isDigits(s){ if(!s) return false; for(var i=0;i<s.length;i++){ var c=s.charCodeAt(i); if(c<48||c>57) return false; } return true; }
+      function toEmbedUrl(url){
+        if(!url) return '';
+        try{
+          var u=new URL(url, location.href);
+          var host=u.hostname;
+          if(host.endsWith('youtube.com') && u.pathname==='/watch'){
+            var id=u.searchParams.get('v'); if(id) return 'https://www.youtube.com/embed/'+id;
+          }
+          if(host==='youtu.be' || host.endsWith('.youtu.be')){
+            var id2=stripFirstSlash(u.pathname); if(id2) return 'https://www.youtube.com/embed/'+id2;
+          }
+          if(host.endsWith('vimeo.com')){
+            var parts=u.pathname.split('/').filter(Boolean); var vid=parts[0]||''; if(isDigits(vid)) return 'https://player.vimeo.com/video/'+vid;
+          }
+          if(host.endsWith('dailymotion.com') && u.pathname.indexOf('/video/')===0){
+            var did=u.pathname.split('/').pop(); if(did) return 'https://www.dailymotion.com/embed/video/'+did;
+          }
+          return url;
+        }catch(e){ return url; }
+      }
+      function openInModalFromUrl(url){
+        if(!url) return;
+        $modalBody.innerHTML='';
+        var embed=toEmbedUrl(url);
+        if(location.protocol==='https:' && embed.toLowerCase().indexOf('http:')===0){
+          $modalBody.innerHTML='<div style="padding:16px">Lecteur bloqué (mixed content). <a class="btn" target="_blank" rel="noopener" href="'+embed+'">Ouvrir dans un onglet</a></div>';
+          openModal();
+          return;
+        }
+        if (embed && embed.startsWith('http:')) {
+          embed = embed.replace(/^http:/, 'https:');
+        }
+        var ifr=document.createElement('iframe');
+        ifr.setAttribute('src', embed);
+        ifr.setAttribute('allow','autoplay; encrypted-media; picture-in-picture');
+        ifr.setAttribute('allowfullscreen','true');
+        ifr.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
+        $modalBody.appendChild(ifr);
+        openModal();
+      }
+      document.addEventListener('click', function(ev){
+        var a=ev.target.closest('a.btn[data-modal="player"]'); if(!a) return;
+        ev.preventDefault();
+        openInModalFromUrl(a.getAttribute('href'));
+      });
+    })();
+  </script>
+</body>
+</html>
