@@ -124,6 +124,35 @@
     footer { padding: 28px 20px; color: #9aa3b2; border-top: 1px solid var(--outline); }
     code { background: #0d1117; border: 1px solid #1f2633; padding: 2px 6px; border-radius: 8px; }
   </style>
+
+<script defer>
+  (function bootFromSession(){
+    const KEY = "jsonSwitcher:data";
+    try {
+      const raw = sessionStorage.getItem(KEY);
+      if (!raw) return;
+      sessionStorage.removeItem(KEY); // one-shot
+      const payload = JSON.parse(raw);
+      const data = payload && payload.data;
+      if (!data) return;
+
+      // Expose pour ton code existant
+      window.__PAGE_JSON__ = data;
+
+      // Si tu as une fonction globale, décommente (et adapte le nom)
+      // if (typeof window.renderFromJson === 'function') {
+      //   window.renderFromJson(data);
+      // }
+
+      // Sinon, dispatch un évènement que ton code peut écouter
+      document.dispatchEvent(new CustomEvent('json:loaded', { detail: { data, url: payload.url } }));
+    } catch (e) {
+      console.warn('[json-switcher] boot fallback annulé :', e);
+    }
+  })();
+</script>
+
+
 </head>
 <body>
   <header>
@@ -621,238 +650,125 @@
       });
     })();
   </script>
-<div id="json-loader" data-presets='[
-  {"label":"getFeed5.compat.json","url":"/getFeed5.compat.json"},
-  {"label":"getFeed.php.json","url":"/getFeed.php.json"}
-]'>
-<!-- ▼▼▼ Bloc HTML PATCHER : coller dans la page ▼▼▼ -->
-<div id="json-loader" data-presets='[
-  {"label":"getFeed5.compat.json","url":"/getFeed5.compat.json"},
-  {"label":"getFeed.php.json","url":"/getFeed.php.json"},
-  {"label":"rss.json","url":"/rss.json"}
-]'>
-  <div class="jl-row">
-    <select class="jl-select">
-      <option value="">— Présets (optionnel) —</option>
-    </select>
-    <input class="jl-url" placeholder="https://…/mon.json" />
-    <button class="jl-btn jl-load">Charger</button>
-    <label class="jl-upload">
-      Importer JSON<input type="file" accept="application/json,.json" hidden />
-    </label>
-  </div>
-
-  <div class="jl-status" aria-live="polite"></div>
-
-  <div class="jl-toolbar">
-    <input class="jl-filter" placeholder="Filtrer par titre…" />
-    <button class="jl-btn jl-toggle">JSON brut</button>
-  </div>
-
-  <div class="jl-panel jl-resume" hidden></div>
-  <pre class="jl-panel jl-raw" hidden></pre>
-</div>
-
-<style>
-/* Tout est scoppé sous #json-loader pour éviter de toucher le reste (modal inclus) */
-#json-loader{font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111}
-#json-loader .jl-row, #json-loader .jl-toolbar{display:flex;flex-wrap:wrap;gap:.5rem;margin:.75rem 0}
-#json-loader input, #json-loader select, #json-loader .jl-btn, #json-loader .jl-upload{
-  border:1px solid #ddd;border-radius:10px;padding:.45rem .6rem;background:#fff
-}
-#json-loader .jl-btn{background:#111;color:#fff;cursor:pointer}
-#json-loader .jl-btn:disabled{opacity:.6;cursor:not-allowed}
-#json-loader .jl-upload{cursor:pointer}
-#json-loader .jl-status{min-height:1.2em;color:#b00;margin:.25rem 0}
-#json-loader .jl-table{width:100%;border-collapse:collapse;margin-top:.5rem}
-#json-loader .jl-table th,#json-loader .jl-table td{border:1px solid #eee;padding:.5rem;vertical-align:top}
-#json-loader .jl-table thead th{background:#f6f6f6;text-align:left;position:sticky;top:0}
-#json-loader .jl-thumb{height:40px;width:auto;border:1px solid #eee;border-radius:6px}
-#json-loader .jl-meta{color:#555;margin:.25rem 0}
-#json-loader .jl-panel{border:1px solid #eee;border-radius:12px;background:#fff;padding:8px;max-height:60vh;overflow:auto}
-#json-loader .jl-raw{white-space:pre-wrap;word-break:break-word}
-</style>
-
+<!-- ▾▾▾ JSON Switcher (Header) ▾▾▾ -->
 <script>
-(function(){
-  const root = document.getElementById('json-loader');
-  if(!root) return;
-
-  const el = {
-    select: root.querySelector('.jl-select'),
-    url: root.querySelector('.jl-url'),
-    loadBtn: root.querySelector('.jl-load'),
-    upload: root.querySelector('.jl-upload input[type=file]'),
-    status: root.querySelector('.jl-status'),
-    filter: root.querySelector('.jl-filter'),
-    toggle: root.querySelector('.jl-toggle'),
-    resume: root.querySelector('.jl-resume'),
-    raw: root.querySelector('.jl-raw')
+  // === CONFIG À AJUSTER ===
+  const JSON_SWITCHER_CONFIG = {
+    // Où injecter la liste ? (CSS selector)
+    headerSelector: 'header', // ex: '#site-header', '.main-header', etc.
+    // JSON disponibles :
+    presets: [
+      { label: "getFeed5.compat.json", url: "/getFeed5.compat.json" },
+      { label: "getFeed.php.json",     url: "/getFeed.php.json" },
+      { label: "rss.json",             url: "/rss.json" }
+    ],
+    // Si tu as une fonction globale de rendu, indique-la ici (ou mets null) :
+    // ex. "renderFromJson", "app.updateFromJson" (notation simple seulement)
+    renderFnName: "renderFromJson",
+    // Clé sessionStorage utilisée pour le fallback / persistance :
+    storageKey: "jsonSwitcher:data",
+    // Classe CSS optionnelle à ajouter au container pour le style
+    extraClass: "json-switcher"
   };
 
-  const state = { data:null, items:[], view:'resume' };
+  (function setupJsonSwitcher(cfg){
+    const header = document.querySelector(cfg.headerSelector) || document.body;
+    if (!header) return;
 
-  // --- Presets --- //
-  try {
-    const presets = JSON.parse(root.getAttribute('data-presets')||'[]');
-    presets.forEach(p=>{
+    // Crée le conteneur dropdown
+    const wrap = document.createElement('div');
+    wrap.className = cfg.extraClass;
+    wrap.style.display = 'inline-flex';
+    wrap.style.alignItems = 'center';
+    wrap.style.gap = '.5rem';
+    wrap.style.marginLeft = '1rem';
+
+    // Label + select (hérite du style de la page)
+    const label = document.createElement('span');
+    label.textContent = 'Flux :';
+    label.style.fontSize = '0.95em';
+    const select = document.createElement('select');
+    select.style.font = 'inherit';
+    select.style.border = '1px solid #ddd';
+    select.style.borderRadius = '8px';
+    select.style.padding = '.25rem .5rem';
+    select.style.background = 'inherit';
+    select.style.color = 'inherit';
+
+    // Options
+    const def = document.createElement('option');
+    def.value = '';
+    def.textContent = '— choisir —';
+    select.appendChild(def);
+    cfg.presets.forEach(p => {
       const o = document.createElement('option');
-      o.value = p.url; o.textContent = p.label; el.select.appendChild(o);
+      o.value = p.url;
+      o.textContent = p.label;
+      select.appendChild(o);
     });
-    el.select.addEventListener('change', ()=>{ el.url.value = el.select.value || ''; });
-  } catch(e){/* ignore */ }
 
-  // --- Helpers --- //
-  const safeJSON = (o)=>JSON.stringify(o, null, 2);
-  const setStatus = (msg,isErr=true)=>{ el.status.style.color=isErr?'#b00':'#0a0'; el.status.textContent = msg||''; };
-  const show = (node)=>{ node.hidden=false; };
-  const hide = (node)=>{ node.hidden=true; };
-  const byPath = (obj, path)=>path.reduce((a,k)=>a==null?undefined:a[k], obj);
+    // Insertion dans le header (à la fin)
+    wrap.appendChild(label);
+    wrap.appendChild(select);
+    header.appendChild(wrap);
 
-  function summarize(data){
-    if(!data || typeof data!=='object') return {kind:'inconnu', count:null, items:[]};
+    // Restaure le dernier choix si présent
+    try {
+      const lastUrl = sessionStorage.getItem(cfg.storageKey + ':lastUrl');
+      if (lastUrl) {
+        const found = Array.from(select.options).find(o => o.value === lastUrl);
+        if (found) select.value = lastUrl;
+      }
+    } catch (_) {}
 
-    // 1) Compat: { rss: [ { channel:[ { item:[...] } ] } ] }
-    if(Array.isArray(data.rss)){
-      const ch0 = Array.isArray(data.rss[0]?.channel) ? data.rss[0].channel[0] : undefined;
-      const items = Array.isArray(ch0?.item) ? ch0.item : [];
-      return { kind:'rss/compat', count:items.length, items };
+    // Resolve fonction de rendu si fournie
+    function getRenderFn(name) {
+      if (!name) return null;
+      // seulement niveau global simple (window.fn), pas de deep path pour garder ça clean
+      return (typeof window[name] === 'function') ? window[name] : null;
     }
-    // 2) Classique: { rss:{ channel:{ item:[...] } } }
-    if(data.rss && data.rss.channel){
-      const ch = data.rss.channel;
-      const items = Array.isArray(ch.item) ? ch.item : ch.item ? [ch.item] : [];
-      return { kind:'rss/classique', count:items.length, items };
+    const renderFn = getRenderFn(cfg.renderFromJson);
+
+    async function onChange() {
+      const url = select.value;
+      if (!url) return;
+      try {
+        // charge le JSON
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP '+res.status);
+        const txt = await res.text();
+        const data = JSON.parse(txt.replace(/^\uFEFF/,'').trim());
+
+        // Persiste le choix
+        sessionStorage.setItem(cfg.storageKey + ':lastUrl', url);
+
+        if (renderFn) {
+          // Cas A : on rerend direct
+          // Exige que ta page sache se re-peupler à chaud avec "data"
+          renderFn(data);
+          // Expose aussi globalement si utile
+          window.__PAGE_JSON__ = data;
+          document.dispatchEvent(new CustomEvent('json:switch', { detail: { url, data } }));
+        } else {
+          // Cas B : fallback - stocke et reload complet (pour “comme si c’était natif”)
+          sessionStorage.setItem(cfg.storageKey, JSON.stringify({ url, data }));
+          location.reload();
+        }
+      } catch (e) {
+        console.error('[json-switcher] Échec chargement JSON :', e);
+        alert('Échec du chargement du JSON : ' + (e && e.message ? e.message : e));
+      }
     }
-    // 3) JSON Feed
-    if(data.version && Array.isArray(data.items)){
-      return { kind:'jsonfeed', count:data.items.length, items:data.items };
-    }
-    // 4) urlset
-    if(data.urlset && Array.isArray(data.urlset.url)){
-      return { kind:'urlset', count:data.urlset.url.length, items:data.urlset.url };
-    }
-    return {kind:'inconnu', count:null, items:[]};
-  }
 
-  function itemField(it){
-    // Titre
-    const title = it.title
-               || it['media:title']
-               || byPath(it,['media:content',0,'media:title'])
-               || byPath(it,['video:video','video:title'])
-               || '';
-    // Lien
-    const link = it.link
-              || byPath(it,['media:content',0,'_url'])
-              || byPath(it,['media:content','@url'])
-              || byPath(it,['video:video','video:content_loc'])
-              || '';
-    // Vignette
-    const thumb = byPath(it,['media:content',0,'media:thumbnail','_url'])
-               || byPath(it,['media:content',0,'media:thumbnail','@url'])
-               || byPath(it,['video:video','video:thumbnail_loc'])
-               || '';
-    // Durée
-    const duration = byPath(it,['media:content',0,'media:duration'])
-                  || it['media:duration']
-                  || byPath(it,['video:video','video:duration'])
-                  || '';
-    return { title, link, thumb, duration };
-  }
-
-  function renderTable(items){
-    const rows = items.map((it,i)=>{
-      const f = itemField(it);
-      const t = (f.title||'').toString();
-      const l = (f.link||'').toString();
-      const d = (f.duration||'').toString();
-      const img = f.thumb ? `<img class="jl-thumb" src="${escapeHtml(f.thumb)}" alt="">` : '—';
-      return `<tr>
-        <td>${i+1}</td>
-        <td>${escapeHtml(t)}</td>
-        <td>${l ? `<a href="${escapeAttr(l)}" target="_blank" rel="noreferrer">${escapeHtml(l)}</a>`:'—'}</td>
-        <td>${img}</td>
-        <td>${escapeHtml(d)}</td>
-      </tr>`;
-    }).join('');
-    return `<div class="jl-meta">Items: <strong>${items.length}</strong></div>
-      <div style="overflow:auto; max-height:60vh;">
-        <table class="jl-table">
-          <thead><tr><th>#</th><th>Titre</th><th>Lien</th><th>Vignette</th><th>Durée</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-  }
-
-  function escapeHtml(s){ return s.replace(/[&<>\"]/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[m])); }
-  function escapeAttr(s){ return escapeHtml(s).replace(/'/g,'&#39;'); }
-
-  function applyFilter(items, q){
-    if(!q) return items;
-    const needle = q.toLowerCase();
-    return items.filter(it=>{
-      const { title } = itemField(it);
-      return String(title||'').toLowerCase().includes(needle);
-    });
-  }
-
-  function render(){
-    if(!state.data){ hide(el.resume); hide(el.raw); return; }
-    const summary = summarize(state.data);
-    const items = applyFilter(summary.items, el.filter.value.trim());
-    el.raw.textContent = safeJSON(state.data);
-
-    if(state.view==='json'){ show(el.raw); hide(el.resume); }
-    else {
-      el.resume.innerHTML = renderTable(items);
-      show(el.resume); hide(el.raw);
-    }
-  }
-
-  async function loadFromUrl(){
-    const u = (el.url.value||'').trim();
-    if(!u) return;
-    setStatus('', false);
-    el.loadBtn.disabled = true;
-    try{
-      const res = await fetch(u, { cache:'no-store' });
-      if(!res.ok) throw new Error('HTTP '+res.status);
-      const txt = await res.text();
-      let data;
-      try { data = JSON.parse(txt); }
-      catch { data = JSON.parse(txt.replace(/^\\uFEFF/, '').trim()); }
-      state.data = data; state.view='resume'; render();
-    }catch(e){ setStatus('Échec du chargement : '+(e.message||e)); }
-    finally{ el.loadBtn.disabled = false; }
-  }
-
-  el.loadBtn.addEventListener('click', loadFromUrl);
-  el.url.addEventListener('keydown', (e)=>{ if(e.key==='Enter') loadFromUrl(); });
-  el.upload.addEventListener('change', (ev)=>{
-    const f = ev.target.files && ev.target.files[0]; if(!f) return;
-    const r = new FileReader();
-    r.onload = ()=>{
-      try{
-        const t = String(r.result||'');
-        state.data = JSON.parse(t.replace(/^\\uFEFF/, '').trim());
-        state.view='resume'; setStatus('', false); render();
-      }catch(e){ setStatus('Fichier illisible : '+(e.message||e)); }
-    };
-    r.onerror = ()=> setStatus('Impossible de lire le fichier.');
-    r.readAsText(f, 'utf-8');
-  });
-  el.filter.addEventListener('input', render);
-  el.toggle.addEventListener('click', ()=>{
-    state.view = state.view==='json' ? 'resume' : 'json';
-    el.toggle.textContent = state.view==='json' ? 'Résumé' : 'JSON brut';
-    render();
-  });
-
-  // Au départ : rien affiché tant qu'on n'a pas chargé
-})();
+    select.addEventListener('change', onChange);
+  })(JSON_SWITCHER_CONFIG);
 </script>
-<!-- ▲▲▲ Fin du bloc HTML PATCHER ▲▲▲ -->
+
+<style>
+  /* Quelques affineries de style optionnelles, scoppées. Ajuste si besoin. */
+  .json-switcher select:focus { outline: 2px solid rgba(0,0,0,.2); outline-offset: 1px; }
+</style>
+<!-- ▴▴▴ Fin JSON Switcher ▴▴▴ -->
 
 </body>
 </html>
