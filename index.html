@@ -176,7 +176,58 @@
 
     footer { padding: 28px 20px; color: #9aa3b2; border-top: 1px solid var(--outline); }
     code { background: #0d1117; border: 1px solid #1f2633; padding: 2px 6px; border-radius: 8px; }
-  </style>
+  
+/* 1) Toolbar : éviter l'écrasement des contrôles */
+@media (max-width: 960px) {
+  .toolbar {
+    grid-template-columns: 1fr auto auto;
+    row-gap: 8px;
+  }
+  /* On passe la liste/ grille + boutons sur la 2e ligne */
+  .seg { order: 3; }
+  #reload, #theme { order: 4; }
+}
+@media (max-width: 560px) {
+  .toolbar {
+    grid-template-columns: 1fr;
+  }
+  #sort, .seg, #reload, #theme {
+    width: 100%;
+  }
+}
+
+/* 2) Vue liste : empiler sur mobile */
+@media (max-width: 600px) {
+  body.list .card { flex-direction: column; }
+  body.list .thumb { width: 100%; height: auto; min-width: 0; }
+}
+
+/* 3) Select JSON (chevron centré) */
+#filters .chip-select::after {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* 4) Modal : hauteur plus fiable */
+.modal-dialog {
+  width: min(920px, 92vw);
+  height: clamp(60vh, 80vh, 85vh);
+}
+
+/* 5) Titres longs : pas de débordement */
+.title { word-break: break-word; overflow-wrap: anywhere; }
+
+/* 6) Cibles tactiles un peu plus confortables */
+.btn { padding: 12px 16px; }
+.chip { padding: 8px 12px; }
+
+/* 7) Accessibilité : réduire les animations si demandé */
+@media (prefers-reduced-motion: reduce) {
+  .skel { animation: none; }
+  .play-overlay { transition: none; }
+}
+
+</style>
 </head>
 <body>
   <header>
@@ -290,8 +341,19 @@
     const TMDB_LANG = 'fr-FR';
     const TMDB_CONCURRENCY = 6;
     const TMDB_PREFER_BACKDROP = true;
-    const TMDB_BACKDROP_SIZE =
-      (window.innerWidth >= 1280 ? 'w1920' : (window.innerWidth >= 768 ? 'w1280' : 'w780'));
+    function chooseBackdropSize(){
+  return (window.innerWidth >= 1280) ? 'w1920' :
+         (window.innerWidth >= 768)  ? 'w1280' : 'w780';
+}
+let TMDB_BACKDROP_SIZE = chooseBackdropSize();
+window.addEventListener('resize', () => {
+  const next = chooseBackdropSize();
+  if (next !== TMDB_BACKDROP_SIZE) {
+    TMDB_BACKDROP_SIZE = next;
+    // Pas besoin de recharger : les images déjà affichées s’adaptent,
+    // et les pages suivantes utiliseront la nouvelle taille.
+  }
+});
 
     function tmdbHeaders() {
       if (!TMDB_API_KEY) return { accept: 'application/json' };
