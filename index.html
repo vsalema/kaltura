@@ -299,21 +299,107 @@
       if (!ms) return ''; try { return new Date(ms).toLocaleDateString(locale, { year: 'numeric', month: 'short', day: '2-digit' }); } catch { return ''; }
     }
 
-    function openPlayer(item) {
-      $modalBody.innerHTML = '';
-      let node = null;
-      if (item.player) {
-        node = el('iframe', { attrs: { src: item.player, allow: 'autoplay; encrypted-media; picture-in-picture', allowfullscreen: 'true' } });
-      } else if (isVideoUrl(item.mediaUrl)) {
-        node = el('video', { attrs: { src: item.mediaUrl, controls: 'true', playsinline: 'true' } });
-      }
-      if (!node) {
-        window.open(item.link || item.mediaUrl || item.player, '_blank', 'noopener');
-        return;
-      }
-      $modalBody.appendChild(node);
-      openModal();
+    function toEmbedUrl(url) {
+  if (!url) return "";
+  try {
+    const u = new URL(url, location.href);
+    // YouTube
+    if ((/(\.|^)youtube\.com$/).test(u.hostname) && u.pathname === "/watch") {
+      const id = u.searchParams.get("v");
+      if (id) return `https://www.youtube.com/embed/${id}`;
     }
+    if ((/(\.|^)youtu\.be$/).test(u.hostname)) {
+      const id = u.pathname.replace(/^\//, "");
+      if (id) return `https://www.youtube.com/embed/${id}`;
+    }
+    // Vimeo
+    if ((/(\.|^)vimeo\.com$/).test(u.hostname)) {
+      const id = u.pathname.split("/").filter(Boolean)[0];
+      if (/^\d+$/.test(id)) return `https://player.vimeo.com/video/${id}`;
+    }
+    // Dailymotion
+    if ((/(\.|^)dailymotion\.com$/).test(u.hostname) && u.pathname.startsWith("/video/")) {
+      const id = u.pathname.split("/").pop();
+      if (id) return `https://www.dailymotion.com/embed/video/${id}`;
+    }
+    return url;
+  } catch { return url; }
+}
+
+function openPlayer(item) {
+  $modalBody.innerHTML = "";
+
+  // 1) Lecteur embarqué si possible
+  let embed = item.player ? toEmbedUrl(item.player) : "";
+
+  // HTTPS page → HTTP iframe = bloqué par le navigateur (mixed content)
+  if (embed && location.protocol === "https:" && /^http:\/\//i.test(embed)) {
+    $modalBody.innerHTML = `<div style="padding:16px">
+      <p>Lecteur bloqué (mixed content : HTTPS → HTTP).</p>
+      <p><a class="btn" href="${embed}" target="_blank" rel="noopener">Ouvrir dans un onglet</a></p>
+    </div>`;
+    openModal();
+    return;
+  }
+
+  if (embed) {
+    const ifr = el("iframe", { attrs: {
+      src: embed,
+      allow: "autoplay; encrypted-media; picture-in-picture",
+      allowfullscreen: "true",
+      referrerpolicy: "strict-origin-when-cross-origin"
+    }});
+    $modalBody.appendChild(ifr);
+    openModal();
+    // Si X-Frame-Options / CSP bloque l’embed, propose un lien
+    setTimeout(() => {
+      const hint = el("div", { html:
+        `<div style="position:absolute;bottom:8px;right:8px">
+           <a class="btn" href="${embed}" target="_blank" rel="noopener">Ouvrir dans un onglet</a>
+         </div>` });
+      $modalBody.appendChild(hint);
+    }, 1200);
+    return;
+  }
+
+  // 2) Sinon, lecture directe (HLS si .m3u8)
+  if (isVideoUrl(item.mediaUrl)) {
+    const v = el("video", { attrs: { controls: "true", playsinline: "true" }});
+    $modalBody.appendChild(v);
+    openModal();
+
+    const src = item.mediaUrl;
+    const isHls = /\.m3u8($|\?)/i.test(src);
+
+    try {
+      if (isHls) {
+        if (window.Hls && window.Hls.isSupported()) {
+          const hls = new Hls();
+          hls.loadSource(src);
+          hls.attachMedia(v);
+        } else if (v.canPlayType && v.canPlayType("application/vnd.apple.mpegURL")) {
+          v.src = src; // Safari/iOS
+        } else {
+          v.replaceWith(el("div", { html:
+            `<div style="padding:16px">
+               <p>Ce navigateur ne lit pas HLS nativement.</p>
+               <p><a class="btn" href="${src}" target="_blank" rel="noopener">Ouvrir le flux</a></p>
+             </div>` }));
+        }
+      } else {
+        v.src = src;
+      }
+    } catch (e) { console.error(e); }
+    return;
+  }
+
+  // 3) Dernier recours
+  const url = item.link || item.mediaUrl || item.player;
+  if (url) { window.open(url, "_blank", "noopener"); return; }
+  $modalBody.innerHTML = '<div style="padding:16px">Aucune source lisible.</div>';
+  openModal();
+}
+
 
     function openModal() { $modal.classList.add('show'); $modal.setAttribute('aria-hidden', 'false'); }
     function closeModal() { $modal.classList.remove('show'); $modal.setAttribute('aria-hidden', 'true'); $modalBody.innerHTML = ''; }
@@ -573,5 +659,6 @@ function toEmbedUrl(url) {
   </script>
 </body>
 </html>
+
 
 
