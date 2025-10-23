@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+ <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
   <title>Flux média — JSON → Cartes</title>
   <style>
     :root {
@@ -577,6 +578,9 @@
           openModal();
           return;
         }
+        if (embed && embed.startsWith('http:')) {
+        embed = embed.replace(/^http:/, 'https:');
+         }
         var ifr=document.createElement('iframe');
         ifr.setAttribute('src', embed);
         ifr.setAttribute('allow','autoplay; encrypted-media; picture-in-picture');
@@ -597,3 +601,4 @@
   </script>
 </body>
 </html>
+
