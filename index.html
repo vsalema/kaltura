@@ -122,6 +122,7 @@
     footer { padding: 28px 20px; color: #9aa3b2; border-top: 1px solid var(--outline); }
     code { background: #0d1117; border: 1px solid #1f2633; padding: 2px 6px; border-radius: 8px; }
   </style>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 </head>
 <body>
   <header>
@@ -343,7 +344,7 @@
       const actions = el('div', { class: 'actions' });
       if (item.player || isVideoUrl(item.mediaUrl)) {
         const btnPlay = el('button', { class: 'btn btn-primary', text: 'Lire ici', attrs: { type: 'button' } });
-        btnPlay.addEventListener('click', () => openPlayer(item));
+        btnPlay.addEventListener('click', () => openPlayerFixed(item));
         actions.appendChild(btnPlay);
       }
       if (item.player) actions.appendChild(el('a', { class: 'btn', attrs: { href: item.player, target: '_blank', rel: 'noopener' }, text: 'Ouvrir le lecteur' }));
@@ -539,6 +540,32 @@
       currentPage = Math.max(1, parseInt(usp.get('page') || '1', 10));
       setBodyTheme('dark');
     })();
+function toEmbedUrl(url) {
+  if (!url) return "";
+  try {
+    const u = new URL(url, location.href);
+    // YouTube
+    if ((/(\.|^)youtube\.com$/).test(u.hostname) && u.pathname === "/watch") {
+      const id = u.searchParams.get("v");
+      if (id) return `https://www.youtube.com/embed/${id}`;
+    }
+    if ((/(\.|^)youtu\.be$/).test(u.hostname)) {
+      const id = u.pathname.replace(/^\//, "");
+      if (id) return `https://www.youtube.com/embed/${id}`;
+    }
+    // Vimeo
+    if ((/(\.|^)vimeo\.com$/).test(u.hostname)) {
+      const id = u.pathname.split("/").filter(Boolean)[0];
+      if (/^\d+$/.test(id)) return `https://player.vimeo.com/video/${id}`;
+    }
+    // Dailymotion
+    if ((/(\.|^)dailymotion\.com$/).test(u.hostname) && u.pathname.startsWith("/video/")) {
+      const id = u.pathname.split("/").pop();
+      if (id) return `https://www.dailymotion.com/embed/video/${id}`;
+    }
+    return url;
+  } catch { return url; }
+}
 
     // ====== Start ======
     renderCategoryChips();
@@ -546,3 +573,4 @@
   </script>
 </body>
 </html>
+
