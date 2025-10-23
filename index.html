@@ -179,7 +179,10 @@
     footer { padding: 28px 20px; color: #9aa3b2; border-top: 1px solid var(--outline); }
     code { background: #0d1117; border: 1px solid #1f2633; padding: 2px 6px; border-radius: 8px; }
 
-    /* Bouton pour ré-afficher la barre quand cachée (mobile) */
+    /* Crédit footer */
+    .credit { margin-top: 12px; text-align: right; font-size: 13px; color: var(--muted); }
+
+    /* Bouton ré-afficher la barre (mobile) */
     .header-toggle{
       position: fixed; top: 10px; left: 10px; z-index: 10000;
       display: none; align-items: center; gap: 8px;
@@ -247,6 +250,7 @@
         <a id="openSrc" class="btn" href="#" target="_blank" rel="noopener">Ouvrir la source</a>
       </div>
       <div>Astuce : si vous ouvrez ce fichier directement en <code>file://</code>, certains navigateurs bloquent <code>fetch()</code>. Servez ces fichiers via un petit serveur HTTP local (ex. <code>python -m http.server</code>) ou placez-les sur votre hébergement.</div>
+      <div class="credit">by <strong>vsalema</strong></div>
     </div>
   </footer>
 
@@ -256,7 +260,7 @@
     const usp = new URLSearchParams(location.search);
     const JSON_URL = usp.get('src') || DEFAULT_JSON_URL;
 
-    // Source courante + presets (remplace les URLs par les tiennes si besoin)
+    // Source courante + presets
     let currentSrc = JSON_URL;
     const PRESETS = [
       { label: 'Flux 1', url: '/data/flux1.json' },
@@ -402,7 +406,7 @@
       if (!TMDB_USE || !TMDB_API_KEY) return items;
       await TMDB.init();
 
-      const cache = new Map(); // key: `${title}|${year}` → Promise<{kind, backdrop_path, poster_path}>
+      const cache = new Map();
       const queue = items.map(it => async () => {
         if (it.thumb && !TMDB_REPLACE_ALL) return;
         const { t, y } = parseTitleYear(it.title || '');
@@ -780,7 +784,6 @@
       let ticking = false;
 
       function setHeaderSpace(active){
-        // Si caché sur mobile, on rend l’espace à la page
         const px = active ? 0 : (document.getElementById('pageHeader').offsetHeight || 0);
         document.documentElement.style.setProperty('--header-h', px + 'px');
       }
@@ -840,7 +843,7 @@
   <script>
     (function(){
       function stripFirstSlash(s){ return (s && s.charAt(0)==='/' ) ? s.slice(1) : (s||''); }
-      function isDigits(s){ if(!s) return false; for(var i=0;i<s.length;i++){ var c=s.charCodeAt(i); if(c<48||c>57) return false; } return true; }
+    function isDigits(s){ if(!s) return false; for(var i=0;i<s.length;i++){ var c=s.charCodeAt(i); if(c<48||c>57) return false; } return true; }
       function toEmbedUrl(url){
         if(!url) return '';
         try{
