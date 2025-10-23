@@ -100,26 +100,48 @@
 }
 
 /* Le <select> : plus lisible, plus contrasté, flèche custom */
+/* ▼▼ Select lisible dans les deux thèmes ▼▼ */
+
+/* état fermé (le contrôle lui-même) */
 #filters .chip-select select{
-  appearance: none;                 /* masque la flèche native */
+  appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-  padding: 6px 24px 6px 6px;        /* espace pour la flèche */
-  min-width: 200px;                 /* ajuste si tu veux plus compact */
+  background-color: #111726;       /* fond sombre */
+  color: var(--text);               /* texte clair */
+  border: 1px solid #2a3347;
+  border-radius: 8px;
+  padding: 6px 28px 6px 10px;       /* espace pour la flèche */
+  min-width: 220px;
+  line-height: 1.2;
+  color-scheme: dark;               /* hint aux navigateurs pour un rendu dark */
 }
 
+/* items du menu (si le navigateur autorise le style des options) */
+#filters .chip-select select option{
+  background-color: #0b101c;        /* popup sombre */
+  color: #e6e9ef;
+}
+
+/* focus visible */
 #filters .chip-select select:focus{
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 8px;
 }
 
-/* Flèche (SVG) toujours visible sur fond sombre/clair */
+/* thème clair : inversions propres */
+[data-theme="light"] #filters .chip-select select{
+  background-color: #ffffff;
+  color: #0f1320;
+  border-color: var(--outline);
+  color-scheme: light;
+}
+[data-theme="light"] #filters .chip-select select option{
+  background-color: #ffffff;
+  color: #0f1320;
+}
+
+/* flèche custom (contraste OK déjà posé), à garder : */
 #filters .chip-select::after{
   content: "";
   position: absolute;
@@ -136,6 +158,7 @@
 [data-theme="light"] #filters .chip-select::after{
   background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" fill="%233b4251" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg>');
 }
+
 
     /* ▲▲ Fin ajout ▲▲ */
 
@@ -750,4 +773,5 @@
   </script>
 </body>
 </html>
+
 
