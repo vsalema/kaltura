@@ -338,6 +338,9 @@
         if (!cache.has(key)) cache.set(key, findArtwork(t, y));
         const art = await cache.get(key);
         if (!art) return;
+        // préserver l'URL d'origine si on remplace
+        if (!it.origThumb) it.origThumb = it.thumb || '';
+
         if (art.kind === 'tv') {
           if (art.poster_path) { it.thumb = TMDB.posterUrl(art.poster_path, 'w342'); return; }
           if (art.backdrop_path) { it.thumb = TMDB.backdropUrl(art.backdrop_path, TMDB_BACKDROP_SIZE); return; }
@@ -360,7 +363,7 @@
       await runNext();
       return items;
     }
-    // <<< Fallback TMDB non bloquant
+    // <<< Enrichissement non bloquant
     async function tryEnrichWithTMDB(items) {
       if (!TMDB_USE || !TMDB_API_KEY) return;
       try {
@@ -414,6 +417,8 @@
     function pickDesc(it, media) {
       return (media?.['media:description'] || it?.description || it?.['content:encoded'] || '');
     }
+
+    // >>>>>>>>>> PARSE ITEMS (ajout origThumb)
     function parseItems(data) {
       const rss = getArray(data?.rss);
       const channel = getArray(rss?.[0]?.channel);
@@ -423,13 +428,14 @@
         const link = it?.link ?? '';
         const media = getArray(it['media:content'])?.[0] ?? {};
         const thumb = media?.['media:thumbnail']?._url || media?.thumbnail || '';
+        const origThumb = thumb || ''; // <— garde l'URL d’origine
         const desc = pickDesc(it, media);
         const player = media?.['media:player']?._url ?? '';
         const mediaUrl = media?._url || it?.enclosure?._url || '';
         const cats = getArray(media?.['media:category']).map(c => c?.['media:category']).filter(Boolean);
         const dateObj = tryFirstDate(it);
         const dateMs = dateObj ? dateObj.getTime() : null;
-        return { title, link, thumb, desc, player, mediaUrl, cats, dateMs };
+        return { title, link, thumb, origThumb, desc, player, mediaUrl, cats, dateMs };
       });
       const seen = new Set();
       const out = [];
@@ -440,6 +446,8 @@
       }
       return out;
     }
+    // <<<<<<<<<< PARSE ITEMS
+
     function isVideoUrl(url) {
       if (!url) return false; const u = url.split('?')[0].toLowerCase();
       return u.endsWith('.mp4') || u.endsWith('.webm') || u.endsWith('.ogg') || u.endsWith('.m3u8');
@@ -465,12 +473,15 @@
       return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
     }
 
+    // >>>>>>>>>> CARD avec fallback TMDB → origThumb
     function card(item, idx) {
       const c = el('article', { class: 'card', attrs: { role: 'listitem' } });
 
-      // --- vignette avec srcset/sizes si c’est une URL TMDB
+      // Source initiale (peut déjà être une URL TMDB si enrichie)
       const src = item.thumb || placeholderThumbSVG();
       const imgAttrs = { class: 'thumb', attrs: { alt: '', loading: 'lazy', decoding: 'async' } };
+
+      // Si URL TMDB, activer srcset/sizes
       const tmdbPath = (typeof src === 'string' && src.includes('image.tmdb.org/t/p/')) ? tmdbExtractPath(src) : null;
       if (tmdbPath) {
         imgAttrs.attrs.src = `${TMDB_BASE}w342${tmdbPath}`;
@@ -479,34 +490,68 @@
       } else {
         imgAttrs.attrs.src = src;
       }
+
       const img = el('img', imgAttrs);
-      if (typeof idx === 'number' && idx < 2) { img.setAttribute('loading', 'eager'); img.setAttribute('fetchpriority', 'high'); }
+
+      // Les 2 premières en priorité (meilleur LCP)
+      if (typeof idx === 'number' && idx < 2) {
+        img.setAttribute('loading', 'eager');
+        img.setAttribute('fetchpriority', 'high');
+      }
+
+      // Fallback : si TMDB casse (erreur ou lenteur), revenir à l’image d’origine puis placeholder
+      if (item.origThumb) img.dataset.fallback = item.origThumb;
+
+      function doFallback() {
+        const fb = img.dataset.fallback || '';
+        img.removeAttribute('srcset');
+        img.removeAttribute('sizes');
+        img.onerror = null; // éviter boucle
+        img.src = fb || placeholderThumbSVG();
+      }
+
+      img.addEventListener('error', doFallback, { once: true });
+
+      // Timeout « lenteur » seulement si on est sur TMDB et qu’on a un fallback
+      const FALLBACK_TIMEOUT_MS = 3500;
+      if (tmdbPath && item.origThumb) {
+        const timer = setTimeout(() => {
+          if (!img.complete) doFallback();
+        }, FALLBACK_TIMEOUT_MS);
+        img.addEventListener('load', () => clearTimeout(timer), { once: true });
+        img.addEventListener('error', () => clearTimeout(timer), { once: true });
+      }
+
       c.appendChild(img);
 
+      // Contenu
       const content = el('div', { class: 'content' });
       const h3 = el('div', { class: 'title' }); h3.textContent = item.title || 'Sans titre';
       const desc = el('p', { class: 'desc' }); desc.textContent = item.desc || '';
       const meta = el('div', { class: 'meta' });
       if (item.dateMs) meta.appendChild(el('span', { class: 'pill', text: formatDateMs(item.dateMs) }));
       for (const cat of item.cats || []) meta.appendChild(el('span', { class: 'pill', text: cat }));
+
       content.appendChild(h3);
       if (item.desc) content.appendChild(desc);
       if ((item.cats && item.cats.length) || item.dateMs) content.appendChild(meta);
       c.appendChild(content);
 
+      // Actions
       const actions = el('div', { class: 'actions' });
       if (item.player || isVideoUrl(item.mediaUrl)) {
         const btnPlay = el('button', { class: 'btn btn-primary', text: 'Lire ici', attrs: { type: 'button' } });
         btnPlay.addEventListener('click', () => openPlayer(item));
         actions.appendChild(btnPlay);
       }
-      if (item.player) actions.appendChild(el('a', { class: 'btn', attrs: { href: item.player, target: '_blank', rel: 'noopener' }, text: 'Ouvrir le lecteur', }));
+      if (item.player) actions.appendChild(el('a', { class: 'btn', attrs: { href: item.player, target: '_blank', rel: 'noopener' }, text: 'Ouvrir le lecteur' }));
       if (item.link) actions.appendChild(el('a', { class: 'btn', attrs: { href: item.link, target: '_blank', rel: 'noopener' }, text: 'Lien' }));
       if (item.mediaUrl) actions.appendChild(el('a', { class: 'btn', attrs: { href: item.mediaUrl, target: '_blank', rel: 'noopener' }, text: 'Média' }));
       c.appendChild(actions);
 
       return c;
     }
+    // <<<<<<<<<< CARD
 
     function skeletonCard() {
       const c = el('article', { class: 'card skel', attrs: { 'aria-hidden': 'true' } });
