@@ -226,13 +226,19 @@
   .skel { animation: none; }
   .play-overlay { transition: none; }
 }
-
+/* Logo responsive */
+    .brand { margin: 6px 0 2px; }
+    .brand .logo { display: block; max-width: 100%; height: auto; }
 </style>
 </head>
 <body>
   <header>
     <div class="wrap">
-      <h1>Flux média (JSON → cartes)</h1>
+      <div class="brand">
+        <a href="#" aria-label="Accueil">
+          <img class="logo" src="https://raw.githubusercontent.com/imagesloads/images/refs/heads/main/img_2ee63541049ea6b3.png" alt="Logo" width="135" height="30" decoding="async" />
+        </a>
+      </div>
       <div class="sub">Cette page suppose que le fichier JSON est accessible à la <strong>même origine</strong>. Vous pouvez aussi passer un paramètre <code>?src=URL</code> pour charger un autre JSON.</div>
       <div class="toolbar">
         <input id="q" type="search" placeholder="Filtrer par titre ou description…" autocomplete="off" />
@@ -901,4 +907,5 @@ window.addEventListener('resize', () => {
   </script>
 </body>
 </html>
+
 
